@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -13,6 +14,8 @@ import '../widgets/recording_controls.dart';
 import '../widgets/time_selector.dart';
 import 'package:simple_pip_mode/pip_widget.dart';
 import 'package:simple_pip_mode/simple_pip.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 
 /// Home screen: camera preview, time selector, and record button.
 class HomeScreen extends StatefulWidget {
@@ -29,6 +32,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _elapsedSeconds = 0;
   bool _permissionsGranted = false;
   bool _isInitializing = true;
+
+  StreamSubscription<UserAccelerometerEvent>? _accelSubscription;
+  Timer? _accidentTimer;
+  ValueNotifier<int>? _countdownNotifier;
+  bool _isAccidentDialogShowing = false;
 
   static const String _prefKeyMinutes = 'recording_minutes';
 
@@ -66,6 +74,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
+    _accelSubscription?.cancel();
+    _accidentTimer?.cancel();
+    _countdownNotifier?.dispose();
     // Always dispose camera to avoid FlutterJNI crash
     _recordingService.dispose();
     super.dispose();
@@ -73,23 +84,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Don't interfere with camera if recording in background
-    if (_isRecording) return;
-
     final controller = _recordingService.controller;
 
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
-      // Dispose camera when app goes to background to prevent
-      // FlutterJNI crash (frames sent after engine detach)
-      if (controller != null && controller.value.isInitialized) {
-        _recordingService.dispose();
+      if (_isRecording) {
+        // Ripristina la luminosità per far vedere bene il navigatore in PiP
+        try {
+          ScreenBrightness().resetApplicationScreenBrightness();
+        } catch (_) {}
+      } else {
+        // Dispose camera when app goes to background to prevent crash
+        if (controller != null && controller.value.isInitialized) {
+          _recordingService.dispose();
+        }
       }
     } else if (state == AppLifecycleState.resumed) {
-      // Reinitialize camera when app comes back
-      _recordingService.initialize().then((_) {
-        if (mounted) setState(() {});
-      });
+      if (_isRecording) {
+        // Riapplica la luminosità bassa quando l'app torna a schermo intero
+        try {
+          ScreenBrightness().setApplicationScreenBrightness(0.05);
+        } catch (_) {}
+      } else {
+        // Reinitialize camera when app comes back
+        _recordingService.initialize().then((_) {
+          if (mounted) setState(() {});
+        });
+      }
     }
   }
 
@@ -176,6 +197,106 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _startAccelerometer() {
+    _accelSubscription?.cancel();
+    _accelSubscription = userAccelerometerEventStream().listen((UserAccelerometerEvent event) {
+      if (!_isRecording || _isAccidentDialogShowing) return;
+
+      final double magnitude = sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
+      
+      // Soglia di decelerazione: 35 m/s^2 (circa 3.5 G)
+      if (magnitude > 35.0) {
+        _handleSuspectedAccident();
+      }
+    });
+  }
+
+  void _handleSuspectedAccident() {
+    _isAccidentDialogShowing = true;
+    _countdownNotifier = ValueNotifier<int>(15);
+
+    _accidentTimer?.cancel();
+    _accidentTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_countdownNotifier!.value > 0) {
+        _countdownNotifier!.value--;
+      } else {
+        timer.cancel();
+        if (_isAccidentDialogShowing) {
+          _isAccidentDialogShowing = false;
+          if (Navigator.canPop(context)) {
+            Navigator.pop(context);
+          }
+          _stopRecording();
+        }
+      }
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2C0B0B),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 32),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Sospetto Incidente',
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'È stata rilevata una forte decelerazione.\nLa registrazione verrà interrotta per sicurezza.',
+                style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 24),
+              ValueListenableBuilder<int>(
+                valueListenable: _countdownNotifier!,
+                builder: (context, value, child) {
+                  return Text(
+                    'Arresto tra: $value s',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _accidentTimer?.cancel();
+                _isAccidentDialogShowing = false;
+                Navigator.pop(context);
+              },
+              child: const Text('Continua', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+              onPressed: () {
+                _accidentTimer?.cancel();
+                _isAccidentDialogShowing = false;
+                Navigator.pop(context);
+                _stopRecording();
+              },
+              child: const Text('Fermati Ora', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _startRecording() async {
     if (_isRecording) return;
 
@@ -202,6 +323,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ],
       callback: startCallback,
     );
+    
+    _startAccelerometer();
   }
 
   Future<void> _stopRecording() async {
@@ -213,6 +336,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     // Stop the foreground service
     await FlutterForegroundTask.stopService();
+
+    // Stop accelerometer
+    _accelSubscription?.cancel();
+    _accidentTimer?.cancel();
+    _isAccidentDialogShowing = false;
 
     // Stop recording and get the session
     final session = await _recordingService.stopRecording();

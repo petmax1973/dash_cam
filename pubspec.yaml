@@ -39,6 +39,9 @@ dependencies:
   # Utilities
   intl: ^0.20.2
   simple_pip_mode: ^1.1.0
+  wakelock_plus: ^1.5.2
+  screen_brightness: ^2.1.7
+  sensors_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

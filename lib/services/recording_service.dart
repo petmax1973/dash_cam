@@ -5,6 +5,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/recording_session.dart';
 
@@ -20,6 +22,7 @@ class RecordingService {
   Timer? _chunkTimer;
   bool _isRecording = false;
   bool _isSwitchingChunk = false;
+  double? _originalBrightness;
 
   // Callbacks for UI updates
   VoidCallback? onRecordingStateChanged;
@@ -115,6 +118,15 @@ class RecordingService {
       await _startNewChunk();
       _isRecording = true;
 
+      // Enable wakelock and dim screen
+      try {
+        WakelockPlus.enable();
+        _originalBrightness = await ScreenBrightness().application;
+        await ScreenBrightness().setApplicationScreenBrightness(0.05);
+      } catch (e) {
+        debugPrint('Errore durante la gestione dello schermo: $e');
+      }
+
       // Set up timer to rotate chunks every chunkDurationSeconds
       _chunkTimer = Timer.periodic(
         const Duration(seconds: chunkDurationSeconds),
@@ -185,6 +197,17 @@ class RecordingService {
     _chunkTimer = null;
     _isRecording = false;
 
+    // Disable wakelock and restore screen brightness
+    try {
+      WakelockPlus.disable();
+      if (_originalBrightness != null) {
+        await ScreenBrightness().setApplicationScreenBrightness(_originalBrightness!);
+        _originalBrightness = null;
+      }
+    } catch (e) {
+      debugPrint('Errore durante il ripristino dello schermo: $e');
+    }
+
     try {
       // Save the last chunk (in progress)
       if (_controller != null && _controller!.value.isRecordingVideo) {
@@ -224,6 +247,14 @@ class RecordingService {
   Future<void> dispose() async {
     _chunkTimer?.cancel();
     _chunkTimer = null;
+
+    try {
+      WakelockPlus.disable();
+      if (_originalBrightness != null) {
+        await ScreenBrightness().setApplicationScreenBrightness(_originalBrightness!);
+        _originalBrightness = null;
+      }
+    } catch (_) {}
 
     if (_controller != null) {
       if (_controller!.value.isRecordingVideo) {

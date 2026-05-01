@@ -5,7 +5,8 @@
 ## ✨ Caratteristiche principali
 
 - 🎥 **Registrazione Video**: Acquisizione video ad alta qualità tramite la fotocamera del dispositivo.
-- 🔄 **Registrazione in Background**: Grazie all'integrazione di `flutter_foreground_task`, l'app continua a registrare anche se è in background o se lo schermo è spento.
+- 🔋 **Risparmio Energetico & Schermo Attivo**: Durante la registrazione lo schermo rimane sempre acceso, ma abbassa automaticamente la luminosità per limitare il consumo della batteria.
+- 🔄 **Registrazione in Background**: Grazie all'integrazione di `flutter_foreground_task`, l'app continua a registrare anche se è in background.
 - 🖼️ **Picture-in-Picture (PiP)**: Visualizza l'anteprima della registrazione mentre utilizzi altre app (es. navigatori GPS).
 - 💾 **Gestione Archiviazione**: Salvataggio automatico delle sessioni di registrazione e possibilità di esportare i video nella galleria del telefono tramite `gal`.
 - ⚙️ **Configurazione Flessibile**: Imposta la durata delle sessioni di registrazione e gestisci lo spazio occupato.
@@ -54,6 +55,7 @@ Assicurati di avere installato:
 - **Gestione Camera**: `camera`
 - **Servizi Background**: `flutter_foreground_task`
 - **Riproduzione Video**: `video_player`
+- **Gestione Schermo ed Energia**: `wakelock_plus`, `screen_brightness`
 - **Gestione Permessi**: `permission_handler`
 - **Salvataggio Galleria**: `gal`
 
